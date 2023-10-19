@@ -4,6 +4,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm, Logger
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import MaybeCallback
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, BaseCallback
+import wandb
 
 
 class JSRLAfterEvalCallback(BaseCallback):
@@ -25,10 +26,16 @@ class JSRLAfterEvalCallback(BaseCallback):
         self.mean_rewards = np.roll(self.mean_rewards, 1)
         self.mean_rewards[0] = self.parent.last_mean_reward
         moving_mean_reward = np.mean(self.mean_rewards)
+        
+        guide_inference = self.policy.guide_inference/self.policy.total_inference
 
         self.logger.record("jsrl/moving_mean_reward", moving_mean_reward)
         self.logger.record("jsrl/best_moving_mean_reward", self.best_moving_mean_reward)
         self.logger.record("jsrl/tolerated_moving_mean_reward", self.tolerated_moving_mean_reward)
+        self.logger.record("jsrl/guide_inference", guide_inference)
+        self.logger.record("jsrl/absolute_guide_inference", self.policy.guide_inference)
+        self.logger.record("jsrl/cumulative_guide_inference", self.policy.cumulative_guide_inference)
+        self.logger.record("jsrl/total_inference", self.policy.total_inference)
         self.logger.dump(self.num_timesteps)
 
         if self.mean_rewards[-1] == -np.inf or self.policy.horizon <= 0:
@@ -42,6 +49,9 @@ class JSRLAfterEvalCallback(BaseCallback):
             self.tolerated_moving_mean_reward = moving_mean_reward - self.policy.tolerance * np.abs(moving_mean_reward)
             self.best_moving_mean_reward = max(self.best_moving_mean_reward, moving_mean_reward)
 
+        self.policy.guide_inference = 0
+        self.policy.total_inference = 0
+
         return True
 
 
@@ -52,7 +62,9 @@ class JSRLEvalCallback(EvalCallback):
 
     def _on_step(self) -> bool:
         self.model.policy.jsrl_evaluation = True
-        return super()._on_step()
+        super()._on_step()
+        self.model.policy.jsrl_evaluation = False
+
 
 
 class JSRLLogger():
@@ -110,10 +122,21 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             else:
                 self.n_eval_episodes = 0
             self.jsrl_evaluation = False
+            self.guide_inference = 0
+            self.cumulative_guide_inference = 0
+            self.total_inference = 0
 
         @property
         def horizon(self):
             return self.horizons[self.horizon_step]
+        
+        def save(self, save_path):
+            """
+            Save the model to a file.
+
+            :param save_path: the path to the file
+            """
+            super().save(save_path)
 
         def predict(
             self,
@@ -137,51 +160,72 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             :return: the model's action and the next hidden state
                 (used in recurrent policies)
             """
-            horizon = self.horizon
-            if not self.training and not self.jsrl_evaluation:
-                horizon = 0
-            timesteps_lte_horizon = timesteps <= horizon
-            timesteps_gt_horizon = timesteps > horizon
-            if isinstance(observation, dict):
-                observation_lte_horizon = {k: v[timesteps_lte_horizon] for k, v in observation.items()}
-                observation_gt_horizon = {k: v[timesteps_gt_horizon] for k, v in observation.items()}
-            elif isinstance(observation, np.ndarray):
-                observation_lte_horizon = observation[timesteps_lte_horizon]
-                observation_gt_horizon = observation[timesteps_gt_horizon]
-            if state is not None:
-                state_lte_horizon = state[timesteps_lte_horizon]
-                state_gt_horizon = state[timesteps_gt_horizon]
+            if self.jsrl_evaluation:
+                # if state == None:
+                #     action, state = super().predict(observation, observation, timesteps == 0, deterministic)
+                # else:
+                action, state = super().predict(observation, state, timesteps == 0, deterministic)
+                return action, state
             else:
-                state_lte_horizon = None
-                state_gt_horizon = None
-            if episode_start is not None:
-                episode_start_lte_horizon = episode_start[timesteps_lte_horizon]
-                episode_start_gt_horizon = episode_start[timesteps_gt_horizon]
-            else:
-                episode_start_lte_horizon = None
-                episode_start_gt_horizon = None
-
-            action = np.zeros((len(timesteps), *self.action_space.shape), dtype=self.action_space.dtype)
-            if state is not None:
-                state = np.zeros((len(timesteps), *state.shape[1:]), dtype=state_lte_horizon.dtype)
-
-            if timesteps_lte_horizon.any():
-                action_lte_horizon, state_lte_horizon = self.guide_policy.predict(
-                    observation_lte_horizon, state_lte_horizon, episode_start_lte_horizon, deterministic
-                )
-                action[timesteps_lte_horizon] = action_lte_horizon
+                self.total_inference += 1
+                horizon = self.horizon
+                # if not self.training and not self.jsrl_evaluation:
+                #     horizon = 0
+                timesteps_lte_horizon = timesteps <= horizon
+                timesteps_gt_horizon = timesteps > horizon
+                if isinstance(observation, dict):
+                    observation_lte_horizon = {k: v[timesteps_lte_horizon] for k, v in observation.items()}
+                    observation_gt_horizon = {k: v[timesteps_gt_horizon] for k, v in observation.items()}
+                elif isinstance(observation, np.ndarray):
+                    # repeat the timesteps so that it matches the dimension of observation
+                    timesteps_lte_horizon = [timesteps_lte_horizon[0], * observation.shape[1]]
+                    observation_lte_horizon = observation[timesteps_lte_horizon]
+                    observation_gt_horizon = observation[timesteps_gt_horizon]
+                else:
+                    observation_lte_horizon = observation
+                    observation_gt_horizon = observation
                 if state is not None:
-                    state[timesteps_lte_horizon] = state_lte_horizon
+                    state_lte_horizon = state[timesteps_lte_horizon]
+                    state_gt_horizon = state[timesteps_gt_horizon]
+                else:
+                    state_lte_horizon = None
+                    state_gt_horizon = None
+                if episode_start is not None:
+                    episode_start_lte_horizon = episode_start[timesteps_lte_horizon]
+                    episode_start_gt_horizon = episode_start[timesteps_gt_horizon]
+                else:
+                    episode_start_lte_horizon = None
+                    episode_start_gt_horizon = None
 
-            if timesteps_gt_horizon.any():
-                action_gt_horizon, state_gt_horizon = super().predict(
-                    observation_gt_horizon, state_gt_horizon, episode_start_gt_horizon, deterministic
-                )
-                action[timesteps_gt_horizon] = action_gt_horizon
+                action = np.zeros((len(timesteps), *self.action_space.shape), dtype=self.action_space.dtype)
                 if state is not None:
-                    state[timesteps_gt_horizon] = state_gt_horizon
+                    state = np.zeros((len(timesteps), *state.shape[1:]), dtype=state_lte_horizon.dtype)
+                    
+                
 
-            return action, state
+                if len(timesteps_lte_horizon) > 1:
+                    raise ValueError("timesteps_lte_horizon is more than one")
+                if timesteps_lte_horizon[0]:
+                # if timesteps_lte_horizon.any():
+                    action_lte_horizon, state_lte_horizon = self.guide_policy.predict(
+                        observation_lte_horizon, state_lte_horizon, episode_start_lte_horizon, deterministic
+                    )
+                    num_true = np.sum(timesteps_lte_horizon)
+                    self.guide_inference += 1
+                    self.cumulative_guide_inference += 1
+                    action[timesteps_lte_horizon] = action_lte_horizon
+                    if state is not None:
+                        state[timesteps_lte_horizon] = state_lte_horizon
+
+                if timesteps_gt_horizon[0]:
+                    action_gt_horizon, state_gt_horizon = super().predict(
+                        observation_gt_horizon, state_gt_horizon, episode_start_gt_horizon, deterministic
+                    )
+                    action[timesteps_gt_horizon] = action_gt_horizon
+                    if state is not None:
+                        state[timesteps_gt_horizon] = state_gt_horizon
+
+                return action, state
 
         def update_horizon(self) -> None:
             """
