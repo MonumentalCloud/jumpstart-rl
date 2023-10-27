@@ -42,12 +42,14 @@ class JSRLAfterEvalCallback(BaseCallback):
             return True
         elif self.best_moving_mean_reward == -np.inf:
             self.best_moving_mean_reward = moving_mean_reward
-        elif moving_mean_reward >= self.tolerated_moving_mean_reward:
+        elif moving_mean_reward > self.tolerated_moving_mean_reward:
             self.policy.update_horizon()
 
         if moving_mean_reward >= self.best_moving_mean_reward:
+            print("called!")
             self.tolerated_moving_mean_reward = moving_mean_reward - self.policy.tolerance * np.abs(moving_mean_reward)
             self.best_moving_mean_reward = max(self.best_moving_mean_reward, moving_mean_reward)
+            print(f"best_moving_mean_reward: {self.best_moving_mean_reward}")
 
         self.policy.guide_inference = 0
         self.policy.total_inference = 0
@@ -59,11 +61,14 @@ class JSRLEvalCallback(EvalCallback):
     def init_callback(self, model: BaseAlgorithm) -> None:
         super().init_callback(model)
         self.logger = JSRLLogger(self.logger)
+        self.model = model
 
     def _on_step(self) -> bool:
         self.model.policy.jsrl_evaluation = True
+        self.model.jsrl_evaluation = True
         super()._on_step()
         self.model.policy.jsrl_evaluation = False
+        self.model.jsrl_evaluation = False
 
 
 
@@ -81,7 +86,7 @@ class JSRLLogger():
         :param value: save to log this value
         :param exclude: outputs to be excluded
         """
-        key = key.replace("eval/", "jsrl/")
+        # key = key.replace("eval/", "jsrl/")
         self._logger.record(key, value, exclude)
 
     def dump(self, step: int = 0) -> None:
@@ -102,8 +107,10 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             tolerance: float = 0.0,
             strategy: str = "curriculum",
             window_size: int = 1,
-            eval_freq: int = 1000,
-            n_eval_episodes: int = 20,
+            eval_freq: int = 100,
+            n_eval_episodes: int = 0,
+            data_collection_strategy: str = "normal",
+            epsilon: float = 0.1,
             **kwargs,
         ) -> None:
             super().__init__(*args, **kwargs)
@@ -111,6 +118,8 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             self.tolerance = tolerance
             assert strategy in ["curriculum", "random"], f"strategy: '{strategy}' must be 'curriculum' or 'random'"
             self.strategy = strategy
+            assert data_collection_strategy in ["noisy", "normal"], f"data_collection_strategy: '{data_collection_strategy}' must be 'noisy' or 'normal'"
+            self.data_collection_strategy = data_collection_strategy
             self.horizon_step = 0
             self.max_horizon = max_horizon
             self.horizons = horizons
@@ -125,6 +134,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             self.guide_inference = 0
             self.cumulative_guide_inference = 0
             self.total_inference = 0
+            self.epsilon = epsilon
 
         @property
         def horizon(self):
@@ -173,17 +183,20 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
                 #     horizon = 0
                 timesteps_lte_horizon = timesteps <= horizon
                 timesteps_gt_horizon = timesteps > horizon
-                if isinstance(observation, dict):
-                    observation_lte_horizon = {k: v[timesteps_lte_horizon] for k, v in observation.items()}
-                    observation_gt_horizon = {k: v[timesteps_gt_horizon] for k, v in observation.items()}
-                elif isinstance(observation, np.ndarray):
-                    # repeat the timesteps so that it matches the dimension of observation
-                    timesteps_lte_horizon = [timesteps_lte_horizon[0], * observation.shape[1]]
-                    observation_lte_horizon = observation[timesteps_lte_horizon]
-                    observation_gt_horizon = observation[timesteps_gt_horizon]
-                else:
-                    observation_lte_horizon = observation
-                    observation_gt_horizon = observation
+                # if isinstance(observation, dict):
+                #     observation_lte_horizon = {k: v[timesteps_lte_horizon] for k, v in observation.items()}
+                #     observation_gt_horizon = {k: v[timesteps_gt_horizon] for k, v in observation.items()}
+                # elif isinstance(observation, np.ndarray):
+                #     # repeat the timesteps so that it matches the dimension of observation
+                #     # make a mask called timesteps_lte_horizon that is the same shape as observation and is True for timesteps <= horizon
+                #     timesteps_lte_horizon = [timesteps_lte_horizon[0]] * observation.shape[1]
+                #     observation = observation.squeeze()
+                #     print(observation.shape)
+                #     observation_lte_horizon = observation[timesteps_lte_horizon]
+                #     observation_gt_horizon = observation[timesteps_gt_horizon]
+                # else:
+                #     observation_lte_horizon = observation
+                #     observation_gt_horizon = observation
                 if state is not None:
                     state_lte_horizon = state[timesteps_lte_horizon]
                     state_gt_horizon = state[timesteps_gt_horizon]
@@ -208,7 +221,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
                 if timesteps_lte_horizon[0]:
                 # if timesteps_lte_horizon.any():
                     action_lte_horizon, state_lte_horizon = self.guide_policy.predict(
-                        observation_lte_horizon, state_lte_horizon, episode_start_lte_horizon, deterministic
+                        observation, state_lte_horizon, episode_start_lte_horizon, deterministic
                     )
                     num_true = np.sum(timesteps_lte_horizon)
                     self.guide_inference += 1
@@ -217,13 +230,19 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
                     if state is not None:
                         state[timesteps_lte_horizon] = state_lte_horizon
 
-                if timesteps_gt_horizon[0]:
+                elif timesteps_gt_horizon[0]:
                     action_gt_horizon, state_gt_horizon = super().predict(
-                        observation_gt_horizon, state_gt_horizon, episode_start_gt_horizon, deterministic
+                        observation, state_gt_horizon, episode_start_gt_horizon, deterministic
                     )
                     action[timesteps_gt_horizon] = action_gt_horizon
                     if state is not None:
                         state[timesteps_gt_horizon] = state_gt_horizon
+                
+                if self.data_collection_strategy == "noisy":
+                    # With a chance of hyperparameter epsilon, the action is random
+                    if np.random.random() < self.epsilon:
+                        #generate np array with same dimension with the action
+                        action = np.random.uniform(self.action_space.low, self.action_space.high, size=action.shape)
 
                 return action, state
 
@@ -235,14 +254,13 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
                 self.horizon_step += 1
                 self.horizon_step = min(self.horizon_step, len(self.horizons) - 1)
             elif self.strategy == "random":
-                self.horizons = [np.random.choice(self.max_horizon)]
-
+                self.horizon_step = np.random.randint(len(self.horizons))
     return JSRLPolicy
 
 
 def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
     class JSRLAlgorithm(Algorithm):
-        def __init__(self, policy, *args, **kwargs):
+        def __init__(self, policy, eval_env, *args, **kwargs):
             if isinstance(policy, str):
                 policy = self._get_policy_from_name(policy)
             else:
@@ -251,6 +269,7 @@ def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
             kwargs["learning_starts"] = 0
             super().__init__(policy, *args, **kwargs)
             self._timesteps = np.zeros((self.env.num_envs), dtype=np.int32)
+            self.eval_env = eval_env
 
         def _init_callback(
             self,
@@ -264,7 +283,7 @@ def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
             """
             callback = super()._init_callback(callback, progress_bar)
             eval_callback = JSRLEvalCallback(
-                self.env,
+                self.eval_env,
                 callback_after_eval=JSRLAfterEvalCallback(
                     self.policy,
                     self.logger,
@@ -303,8 +322,8 @@ def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
             :return: the model's action and the next hidden state
                 (used in recurrent policies)
             """
+                
             action, state = self.policy.predict(observation, self._timesteps, state, episode_start, deterministic)
-
             self._timesteps += 1
             self._timesteps[self.env.buf_dones] = 0
             if self.policy.strategy == "random" and self.env.buf_dones.any():

@@ -30,40 +30,33 @@ from wandb.integration.sb3 import WandbCallback
 
 # Write a custom env wrapper that wraps around a metaworld env so that it converts info['success'] into info['is_success'] so that it works with the stable-baselines3 eval callback
 class MetaWorldWrapper(Wrapper):
-    def __init__(self, env: Env, sparse=False, truncate_when_done=False):
+    def __init__(self, env: Env):
         super().__init__(env)
         self.env = env
-        self.sparse = sparse
-        self.truncate_when_done = truncate_when_done
         
     def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
+        obs, reward, _, done, info = self.env.step(action)
         info['is_success'] = info['success']
-        if self.sparse:
-            reward=int(info['success'])
-        if self.truncate_when_done:
-            truncated = info["success"] or truncated
-            
-        return obs, reward, terminated, truncated, info
-    
+        return obs, reward, _, done, info
     
     def reset(self, seed=None):
         return self.env.reset(seed=seed)
 
-def main(env_name, timesteps, model_name, grad_steps, sparse):
+
+def main(env_name, timesteps, model_name):
     
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[env_name]
     env = cls()
     env._freeze_rand_vec = False   
     
-    # env = TimeLimit(env, env.max_path_length)
-    env = MetaWorldWrapper(env, sparse=sparse, truncate_when_done=sparse)
+    env = TimeLimit(env, env.max_path_length)
+    env = MetaWorldWrapper(env)
     env = DummyVecEnv([lambda: env])
     
     eval_env = cls(seed=1)
     eval_env._freeze_rand_vec = False
-    # eval_env = TimeLimit(eval_env, eval_env.max_path_length)
-    eval_env = MetaWorldWrapper(eval_env, sparse=sparse, truncate_when_done=True)
+    eval_env = TimeLimit(eval_env, eval_env.max_path_length)
+    eval_env = MetaWorldWrapper(eval_env)
     eval_env = DummyVecEnv([lambda: eval_env])
     
     # env.observation_space.spaces = env.observation_space
@@ -84,12 +77,9 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
         "policy_type": "guide",
         "total_timesteps": 25000,
         "guide_env_name": f"{env_name}",
-        "gradient_steps": grad_steps,
-        "sparse": sparse,
     }
     
     wandb.init(project="jsrl",
-               entity="jsrl-boys",
         dir="/ext_hdd/jjlee/jumpstart-rl/logs",
         config=config,
         group=f"guide_{model_name}_{env_name}",
@@ -132,7 +122,6 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
             replay_buffer_class=HerReplayBuffer,
             replay_buffer_kwargs=her_kwargs,
             learning_starts=1000,
-            gradient_steps=grad_steps,
         )
     elif model_name == "ddpg":
         # Define the HER parameters
@@ -151,51 +140,8 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
             replay_buffer_class=HerReplayBuffer,
             replay_buffer_kwargs=her_kwargs,
             learning_starts=1000,
-            gradient_steps=grad_steps,
         )
-    
-    elif model_name == "sac":
-        # Tune the hyperparameters of SAC so that it will perform optimally in the metaworld environments, especially for dial-turn-v2-goal-observable
-        
-        # Description	value	variable_name
-        # Normal Hyperparameters
-        # Batch size	500	batch_size
-        # Number of epochs	500	n_epochs
-        # Path length per roll-out	500	max_path_length
-        # Discount factor	0.99	discount
-        # Algorithm-Specific Hyperparameters
-        # Policy hidden sizes	(256,256)	hidden_sizes
-        # Activation function of hidden layers	ReLU	hidden_nonlinearity
-        # Policy learning rate	3×10−4	policy_lr
-        # Q-function learning rate	3×10−4	qf_lr
-        # Policy minimum standard deviation	e−20	min_std
-        # Policy maximum standard deviation	e2	max_std
-        # Gradient steps per epoch	500	gradient_steps_per_itr
-        # Number of epoch cycles	40	epoch_cycles
-        # Soft target interpolation parameter	5×10−3	target_update_tau
-        # Use automatic entropy Tuning	True	use_automatic_entropy_tuning
 
-        model = SAC(
-            policy="MlpPolicy",
-            env=env,
-            verbose=1,
-            tensorboard_log=f"/ext_hdd/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
-            learning_rate=3e-4,
-            buffer_size=int(1e6),
-            learning_starts=1000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.99,
-            train_freq=1,
-            gradient_steps=grad_steps,
-            action_noise=None,
-            optimize_memory_usage=False,
-            target_update_interval=1,
-            target_entropy="auto",
-            use_sde=False,
-            sde_sample_freq=-1,
-            policy_kwargs=None,
-        )
     else:    
         model = model_class(
             "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
@@ -216,13 +162,13 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
         # )
         callback=[WandbCallback(
             gradient_save_freq=10000,
-            # model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}",
+            model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}",
             verbose=2,
         ),
                   EvalCallback(
             eval_env,
             n_eval_episodes=100,
-            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
+            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}"
         ),]
         # callback=EvalCallback(
         #     env,
@@ -237,7 +183,5 @@ if __name__ == "__main__":
     parser.add_argument("--env", type=str, default="coffee-button-v2-goal-observable", help="Environment name")
     parser.add_argument("--timesteps", type=int, default=1e6)
     parser.add_argument("--model", type=str, default="sac")
-    parser.add_argument("--grad_steps", type=int, default=1)
-    parser.add_argument("--sparse", type=bool, default=False)
     args = parser.parse_args()
-    main(args.env, args.timesteps, args.model, args.grad_steps, args.sparse)
+    main(args.env, args.timesteps, args.model)
