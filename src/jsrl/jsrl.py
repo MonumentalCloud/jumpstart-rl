@@ -111,6 +111,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             n_eval_episodes: int = 0,
             data_collection_strategy: str = "normal",
             epsilon: float = 0.1,
+            delay_steps: int = 0,
             **kwargs,
         ) -> None:
             super().__init__(*args, **kwargs)
@@ -118,7 +119,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             self.tolerance = tolerance
             assert strategy in ["curriculum", "random"], f"strategy: '{strategy}' must be 'curriculum' or 'random'"
             self.strategy = strategy
-            assert data_collection_strategy in ["noisy", "normal"], f"data_collection_strategy: '{data_collection_strategy}' must be 'noisy' or 'normal'"
+            assert data_collection_strategy in ["noisy", "normal", "delay"], f"data_collection_strategy: '{data_collection_strategy}' must be 'noisy' or 'normal' or 'delay'"
             self.data_collection_strategy = data_collection_strategy
             self.horizon_step = 0
             self.max_horizon = max_horizon
@@ -135,6 +136,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             self.cumulative_guide_inference = 0
             self.total_inference = 0
             self.epsilon = epsilon
+            self.delay_steps = delay_steps
 
         @property
         def horizon(self):
@@ -177,6 +179,9 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
                 action, state = super().predict(observation, state, timesteps == 0, deterministic)
                 return action, state
             else:
+                if self.data_collection_strategy == "delay" and timesteps < self.delay_steps:
+                    return super().predict(observation, state, episode_start, deterministic)
+                    
                 self.total_inference += 1
                 horizon = self.horizon
                 # if not self.training and not self.jsrl_evaluation:

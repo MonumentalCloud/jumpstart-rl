@@ -45,10 +45,12 @@ class MetaWorldWrapper(Wrapper):
     def reset(self, seed=None):
         return self.env.reset(seed=seed)
 
-def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_steps, sparse, data_collection_strategy, epsilon, use_wandb):
+def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_steps, sparse, data_collection_strategy, epsilon, use_wandb, delay_steps):
     if student_env is None:
         student_env = env_name
-        
+
+    use_wandb = use_wandb == "True"
+ 
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[student_env]
     env = cls(seed=seed)
     env._freeze_rand_vec = False   
@@ -80,9 +82,10 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         "sparse": sparse,
         "data_collection_strategy": data_collection_strategy,
         "epsilon": epsilon,
+        "delay_steps": delay_steps,
     }
-    # Group name to today's date
-    if use_wandb:
+    if use_wandb==True:
+        print(use_wandb)
         wandb.init(project="jsrl",
                 entity="jsrl-boys",
             config=config,
@@ -109,6 +112,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
             n_eval_episodes=10,
             data_collection_strategy=data_collection_strategy,
             epsilon=epsilon,
+            delay_steps=delay_steps,
         ),
         verbose=0,
         tensorboard_log="ext_hdd/jjlee/jumpstart-rl/logs/pointmaze_jsrl_curriculum",
@@ -118,7 +122,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         device="cuda:1",
     )
     callback = []
-    if use_wandb:
+    if use_wandb == True:
         callback = [WandbCallback(
         ),]
     model.learn(
@@ -152,6 +156,21 @@ if __name__ == "__main__":
     parser.add_argument("--sparse", type=bool, default=True, help="Whether to use sparse rewards")
     parser.add_argument("--data_collection_strategy", type=str, default="normal", help="The data collection strategy to use")
     parser.add_argument("--epsilon", type=float, default=0.1, help="The epsilon value to use")
-    parser.add_argument("--wandb", type=bool, default=True, help="Whether to use wandb")
+    parser.add_argument("--delay_steps", type=int, default=0, help="The number of steps to delay the teacher help")
+    parser.add_argument("--wandb", type=str, default="False", help="Whether to use wandb")
     args = parser.parse_args()
-    main(args.seed, args.guide_env, args.guide_steps, args.timesteps, args.student_env, args.strategy, args.grad_steps, args.sparse, args.data_collection_strategy, args.epsilon, args.wandb)
+    main(
+        seed=args.seed,
+        env_name=args.guide_env,
+        guide_steps=args.guide_steps,
+        timesteps=args.timesteps,
+        student_env=args.student_env,
+        strategy=args.strategy,
+        grad_steps=args.grad_steps,
+        sparse=args.sparse,
+        data_collection_strategy=args.data_collection_strategy,
+        epsilon=args.epsilon,
+        use_wandb=args.wandb,
+        delay_steps=args.delay_steps,
+    )
+        
