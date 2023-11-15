@@ -5,8 +5,8 @@ cd "/home/jjlee/jumpstart-rl/examples"
 
 # List of student-teacher configurations
 configs=(
-    "coffee-button-v2-goal-observable"
-    "plate-slide-v2-goal-observable"
+    "coffee-button-v2-goal-observable,coffee-button-v2-goal-observable"
+    "plate-slide-v2-goal-observable,plate-slide-v2-goal-observable"
 )
 
 # Iterate through each configuration
@@ -15,14 +15,14 @@ do
     # Extract the guide and student environments from the configuration string
     IFS=',' read -ra envs <<< "$config"
     guide_env="${envs[0]}"
-
+    student_envs="${envs[@]:1}"
 
     # Create a tmux session for the current configuration
     # Truncate the "-v2-goal-observable" suffix from the environment names
-    session_name="3_${guide_env//"-v2-goal-observable"/}_MC"
+    session_name="${guide_env//"-v2-goal-observable"/}_${student_envs//"-v2-goal-observable"/}_delay"
     tmux new-session -d -s "$session_name"
 
     # Run the training script with the current configuration flags
-    cmd="python train_guide.py --sparse=True --env=${guide_env} --model=td3 --timesteps=1000000 --grad_steps=1 --seed=3 --use_wandb=True --log_true_q=True"
+    cmd="python train_jsrl_curriculum_multi_task.py --sparse=True --guide_env=$guide_env --student_env=$student_envs --seed=2 --timesteps=500000 --wandb=True --rollout_success_rate=0.8"
     tmux send-keys -t "$session_name" "$cmd" Enter
 done

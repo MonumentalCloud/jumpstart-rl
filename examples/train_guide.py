@@ -17,6 +17,14 @@ import argparse
 import os
 import wandb
 from wandb.integration.sb3 import WandbCallback
+import numpy as np
+
+import sys
+sys.path.append('/home/jjlee/jumpstart-rl/')
+
+from src.jsrl.guide_helper import get_algorithm
+
+from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
 
 # class CustomEvalCallback(EvalCallback)
 #     def __init__(self, env, n_eval_episodes=5, eval_freq=10000, best_model_save_path=None, log_path=None, model_save_path=None):
@@ -50,10 +58,13 @@ class MetaWorldWrapper(Wrapper):
     def reset(self, seed=None):
         return self.env.reset(seed=seed)
 
-def main(env_name, timesteps, model_name, grad_steps, sparse):
+def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wandb, seed):
+    
+    log_true_q = log_true_q == "True"
+    use_wandb = use_wandb == "True"
     
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[env_name]
-    env = cls()
+    env = cls(seed=seed)
     env._freeze_rand_vec = False   
     
     # env = TimeLimit(env, env.max_path_length)
@@ -86,16 +97,18 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
         "guide_env_name": f"{env_name}",
         "gradient_steps": grad_steps,
         "sparse": sparse,
+        "log_true_q": log_true_q,
     }
     
-    wandb.init(project="jsrl",
-               entity="jsrl-boys",
-        dir="/ext_hdd/jjlee/jumpstart-rl/logs",
-        config=config,
-        group=f"guide_{model_name}_{env_name}",
-        sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
-        monitor_gym=True, 
-    )
+    if use_wandb:
+        wandb.init(project="jsrl",
+                entity="jsrl-boys",
+            dir="/ext_hdd/jjlee/jumpstart-rl/logs",
+            config=config,
+            group=f"guide_{model_name}_{env_name}",
+            sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
+            monitor_gym=True, 
+        )
     
     
     if model_name == "tqc":
@@ -121,7 +134,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
             "goal_selection_strategy": "future",
         }
         
-        model = TQC(
+        model = get_algorithm(TQC)(
             "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
             env=env,
             verbose=1,
@@ -133,14 +146,21 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
             replay_buffer_kwargs=her_kwargs,
             learning_starts=1000,
             gradient_steps=grad_steps,
+            log_true_q=log_true_q, 
+            eval_env=eval_env,
+            eval_freq=10000,
+            n_eval_episodes=10,
+            seed=seed,
+
         )
+        
     elif model_name == "ddpg":
         # Define the HER parameters
         her_kwargs = {
             "goal_selection_strategy": "future",
         }
         
-        model = DDPG(
+        model = get_algorithm(DDPG)(
             "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
             env=env,
             verbose=1,
@@ -152,6 +172,11 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
             replay_buffer_kwargs=her_kwargs,
             learning_starts=1000,
             gradient_steps=grad_steps,
+            log_true_q=log_true_q,
+            eval_env=eval_env,
+            eval_freq=10000,
+            n_eval_episodes=10,
+            seed=seed
         )
     
     elif model_name == "sac":
@@ -175,7 +200,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
         # Soft target interpolation parameter	5×10−3	target_update_tau
         # Use automatic entropy Tuning	True	use_automatic_entropy_tuning
 
-        model = SAC(
+        model = get_algorithm(SAC)(
             policy="MlpPolicy",
             env=env,
             verbose=1,
@@ -195,14 +220,49 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
             use_sde=False,
             sde_sample_freq=-1,
             policy_kwargs=None,
+            eval_env=eval_env,
+            log_true_q=log_true_q,
+            eval_freq=10000,
+            n_eval_episodes=10,
+            seed=seed
         )
-    else:    
-        model = model_class(
+    else:
+        # The noise objects for TD3
+        n_actions = env.action_space.shape[-1]
+        action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.1 * np.ones(n_actions))    
+        
+        model = get_algorithm(model_class)(
             "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
             env=env,
             verbose=1,
             tensorboard_log=f"/ext_hdd/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
+            log_true_q=log_true_q,
+            eval_env=eval_env,
+            seed=seed,
+            eval_freq=10000,
+            n_eval_episodes=10,
+            learning_starts=1000,
+            action_noise=action_noise,
         )
+        
+    if use_wandb:
+        callback = [WandbCallback(
+            gradient_save_freq=10000,
+            # model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}",
+            verbose=2,
+        ),
+                  EvalCallback(
+            eval_env,
+            n_eval_episodes=100,
+            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
+        ),]
+    else:
+        callback = [EvalCallback(
+            eval_env,
+            n_eval_episodes=100,
+            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
+        ),
+        ]
     
     model.learn(
         total_timesteps=timesteps,
@@ -214,16 +274,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse):
         #     eval_freq=10000,
         #     model_save_path=f"examples/models/{env_name}_TD3"
         # )
-        callback=[WandbCallback(
-            gradient_save_freq=10000,
-            # model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}",
-            verbose=2,
-        ),
-                  EvalCallback(
-            eval_env,
-            n_eval_episodes=100,
-            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
-        ),]
+        callback=callback,
         # callback=EvalCallback(
         #     env,
         #     n_eval_episodes=100,
@@ -238,6 +289,9 @@ if __name__ == "__main__":
     parser.add_argument("--timesteps", type=int, default=1e6)
     parser.add_argument("--model", type=str, default="sac")
     parser.add_argument("--grad_steps", type=int, default=1)
-    parser.add_argument("--sparse", type=bool, default=False)
+    parser.add_argument("--sparse", type=bool, default=True)
+    parser.add_argument("--log_true_q", type=bool, default="False")
+    parser.add_argument("--use_wandb", type=str, default="False")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-    main(args.env, args.timesteps, args.model, args.grad_steps, args.sparse)
+    main(args.env, args.timesteps, args.model, args.grad_steps, args.sparse, args.log_true_q, args.use_wandb, args.seed)

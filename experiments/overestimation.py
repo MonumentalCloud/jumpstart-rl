@@ -17,12 +17,11 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 import numpy as np
-from src.jsrl.jsrl import get_jsrl_algorithm
+from src.jsrl.jsrl import get_jsrl_algorithm, JSRLGuides
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
 from typing import Union
-
 
 class MetaWorldWrapper(Wrapper):
     def __init__(self, env: Env, sparse=False, truncate_when_done=False):
@@ -45,11 +44,13 @@ class MetaWorldWrapper(Wrapper):
     def reset(self, seed=None):
         return self.env.reset(seed=seed)
 
-def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_steps, sparse, data_collection_strategy, epsilon, use_wandb, learning_starts=30000, secondary_guide=None):
+def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_steps, sparse, data_collection_strategy, epsilon, use_wandb, learning_starts=30000, guides_directory=None, priority=False, log_true_q=False):
     if student_env is None:
         student_env = env_name
 
     use_wandb = use_wandb == "True"
+    priority = priority == "True"
+    log_true_q = log_true_q == "True"
  
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[student_env]
     env = cls(seed=seed)
@@ -65,20 +66,31 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
     eval_env = MetaWorldWrapper(eval_env, sparse=sparse, truncate_when_done=True)
     eval_env = DummyVecEnv([lambda: eval_env])
     
-    if guide_steps == "best_model":
-        guide_policy = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_sac/best_model", device="cuda:1").policy
-    else:
-        guide_policy = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_sac/{guide_steps}steps_model.zip", device="cuda:1").policy
+    # guides_directory is currently a string, but it should be a list of strings. Decode the guides_directory string into a list of strings
+    if guides_directory is not None:
+        guides_directory = guides_directory.split(",")
+        
     
-    if secondary_guide is not None:
-        secondary_guide = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{secondary_guide}_guide_sac/best_model", device="cuda:1").policy
+    guide_policy = JSRLGuides(
+        guides_directory=guides_directory,
+        priority=priority
+    )
     
+    guide_env=[]
+    
+    # Extract the environments that guides were trained in from the guides directory
+    # The guide directory will be in the following format: /ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}
+    if guides_directory is not None:
+        for guide_directory in guides_directory:
+            env_name = guide_directory.split("/")[-2].split("_guide_")[0]
+            guide_env.append(env_name)
+
     config = {
         "policy_type": strategy,
         "problem": "multi_task",
         "guide_steps": guide_steps,
         "total_timesteps": 25000,
-        "guide_env_name": f"{env_name}",
+        "guide_env_name": guide_env,
         "student_env_name": f"{student_env}",
         "seed": seed,
         "grad_steps": grad_steps,
@@ -86,7 +98,8 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         "data_collection_strategy": data_collection_strategy,
         "epsilon": epsilon,
         "learning_starts": learning_starts,
-        "secondary_guide": secondary_guide,
+        "priority": priority,
+        "log_true_q": log_true_q,
     }
     if use_wandb==True:
         wandb.init(project="jsrl",
@@ -123,7 +136,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         device="cuda:1",
         learning_starts=learning_starts,
         epsilon=epsilon,
-        secondary_guide=secondary_guide,
+        log_true_q=log_true_q,
     )
     callback = []
     if use_wandb == True:
@@ -159,10 +172,12 @@ if __name__ == "__main__":
     parser.add_argument("--grad_steps", type=int, default=1, help="Number of gradient steps to take")
     parser.add_argument("--sparse", type=bool, default=True, help="Whether to use sparse rewards")
     parser.add_argument("--data_collection_strategy", type=str, default="multi", help="The data collection strategy to use")
-    parser.add_argument("--epsilon", type=float, default=0.1, help="The epsilon value to use")
+    parser.add_argument("--epsilon", type=float, default=0, help="The epsilon value to use")
     parser.add_argument("--learning_starts", type=int, default=0, help="The number of steps to delay the teacher help")
     parser.add_argument("--wandb", type=str, default="False", help="Whether to use wandb")
-    parser.add_argument("--secondary_guide", type=str, default="plate-slide-v2-goal-observable", help="The secondary guide to use")
+    parser.add_argument("--guides_directory", type=str, default="/ext_hdd/jjlee/jumpstart-rl/examples/models/coffee-button-v2-goal-observable_guide_sac/best_model.zip,/ext_hdd/jjlee/jumpstart-rl/examples/models/plate-slide-v2-goal-observable_guide_sac/best_model.zip", help="The directory of the guides")
+    parser.add_argument("--priority", type=str, default="False", help="Whether to use priority")
+    parser.add_argument("--log_true_q", type=str, default="False", help="Whether to log the true q values")
     args = parser.parse_args()
     main(
         seed=args.seed,
@@ -177,6 +192,8 @@ if __name__ == "__main__":
         epsilon=args.epsilon,
         use_wandb=args.wandb,
         learning_starts=args.learning_starts,
-        secondary_guide=args.secondary_guide,
+        guides_directory=args.guides_directory,
+        priority=args.priority,
+        log_true_q=args.log_true_q
     )
         
