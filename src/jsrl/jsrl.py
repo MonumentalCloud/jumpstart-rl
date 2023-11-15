@@ -126,7 +126,7 @@ class JSRLEvalCallback(EvalCallback):
         # Sample the starting states from the replay buffer
         starting_states, observations, actions = self.model.state_action_buffer.sample(1000)      
         observations = torch.from_numpy(observations).float().to(self.model.device)
-        actions = torch.from_numpy(actions).float().to(self.model.device)
+        actions = self.model.policy.predict(observations, deterministic=True)
         pred_q_values = self.model.critic(observations, actions)
         
         # Get the mean of the pred_q_values
@@ -135,24 +135,26 @@ class JSRLEvalCallback(EvalCallback):
         # Get the true q values by running the model for 1000 steps from the starting states
         true_q_values = []
         for i in range(len(starting_states)):
-            env = self.model.env.envs[0]
+            env = self.model.eval_env.envs[0]
             env.reset()
             # Reset the environment to the starting state
             env.set_env_state(starting_states[i])
             # Get the observation
             observation = env.get_obs()
             # Get the action
-            action, _ = self.model.policy.predict(observation, deterministic=True)
+            action = actions[i].cpu().detach().numpy()
             # Get the reward
             reward = 0
             # Get the info
             info = {}
             # Iterate through the environment for 1000 steps
-            for j in range(1000):
+            for j in range(300):
                 # Get the next observation
                 next_observation, next_reward, terminated, truncate, next_info = env.step(action)
                 # Get the next action
                 next_action, _ = self.model.policy.predict(next_observation, deterministic=True)
+                if next_reward >=1:
+                    print(next_reward)
                 # Add the reward to the total reward
                 reward += (self.gamma**j) * next_reward
                 # Set the observation to the next observation

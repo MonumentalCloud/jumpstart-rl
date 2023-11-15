@@ -26,7 +26,7 @@ from typing import Union
 from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
 
 class MetaWorldWrapper(Wrapper):
-    def __init__(self, env: Env, sparse=False, truncate_when_done=False):
+    def __init__(self, env: Env, sparse=True, truncate_when_done=False):
         super().__init__(env)
         self.env = env
         self.sparse = sparse
@@ -46,7 +46,7 @@ class MetaWorldWrapper(Wrapper):
     def reset(self, seed=None):
         return self.env.reset(seed=seed)
 
-def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_steps, sparse, data_collection_strategy, epsilon, use_wandb, learning_starts=30000, guides_directory=None, priority=False, log_true_q=False):
+def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_steps, sparse, data_collection_strategy, epsilon, use_wandb, learning_starts=30000, guides_directory=None, priority=False, log_true_q=False, cuda="cuda:1"):
     if student_env is None:
         student_env = env_name
 
@@ -140,7 +140,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         seed=seed,
         eval_env=eval_env,
         gradient_steps=grad_steps,
-        device="cuda:1",
+        device=cuda,
         learning_starts=learning_starts,
         epsilon=epsilon,
         log_true_q=log_true_q,
@@ -185,7 +185,8 @@ if __name__ == "__main__":
     parser.add_argument("--wandb", type=str, default="False", help="Whether to use wandb")
     parser.add_argument("--guides_directory", type=str, default="/ext_hdd/jjlee/jumpstart-rl/examples/models/coffee-button-v2-goal-observable_guide_sac/best_model.zip,/ext_hdd/jjlee/jumpstart-rl/examples/models/plate-slide-v2-goal-observable_guide_sac/best_model.zip", help="The directory of the guides")
     parser.add_argument("--priority", type=str, default="False", help="Whether to use priority")
-    parser.add_argument("--log_true_q", type=str, default="False", help="Whether to log the true q values")
+    parser.add_argument("--log_true_q", type=str, default="True", help="Whether to log the true q values")
+    parser.add_argument("--cuda_device", type=str, default="cuda:1", help="The cuda device to use")
     args = parser.parse_args()
     main(
         seed=args.seed,
@@ -202,6 +203,7 @@ if __name__ == "__main__":
         learning_starts=args.learning_starts,
         guides_directory=args.guides_directory,
         priority=args.priority,
-        log_true_q=args.log_true_q
+        log_true_q=args.log_true_q,
+        cuda=args.cuda_device
     )
         

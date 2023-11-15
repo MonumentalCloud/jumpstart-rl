@@ -60,7 +60,7 @@ class MetaWorldWrapper(Wrapper):
 
 def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wandb, seed):
     
-    log_true_q = log_true_q == "True"
+
     use_wandb = use_wandb == "True"
     
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[env_name]
@@ -239,7 +239,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             log_true_q=log_true_q,
             eval_env=eval_env,
             seed=seed,
-            eval_freq=10000,
+            eval_freq=100,
             n_eval_episodes=10,
             learning_starts=1000,
             action_noise=action_noise,
@@ -290,7 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="sac")
     parser.add_argument("--grad_steps", type=int, default=1)
     parser.add_argument("--sparse", type=bool, default=True)
-    parser.add_argument("--log_true_q", type=bool, default="False")
+    parser.add_argument("--log_true_q", type=bool, default="True")
     parser.add_argument("--use_wandb", type=str, default="False")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
