@@ -9,6 +9,8 @@ configs = [
 # List of seeds to run through
 seeds = [0, 2, 3, 4]
 
+counter = 0
+
 # Iterate through each configuration
 for config in configs:
     # Iterate through each seed
@@ -22,5 +24,7 @@ for config in configs:
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name])
 
         # Run the training script with the current configuration flags
-        cmd = f"python train_guide.py --sparse=True --env={guide_env} --model=td3 --timesteps=1000000 --grad_steps=1 --seed={seed} --use_wandb=True --log_true_q=True"
+        cmd = f"python train_guide.py --sparse=True --cuda_device=cuda:{counter%2} --env={guide_env} --model=sac --timesteps=1000000 --grad_steps=1 --seed={seed} --use_wandb=True --log_true_q=True"
         subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
+        
+        counter += 1

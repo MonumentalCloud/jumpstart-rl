@@ -124,7 +124,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
     n_actions = env.action_space.shape[-1]
     action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.1 * np.ones(n_actions))
     
-    model = get_jsrl_algorithm(TD3)(
+    model = get_jsrl_algorithm(SAC)(
         "MlpPolicy",
         env=env,
         policy_kwargs=dict(
@@ -144,7 +144,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         learning_starts=learning_starts,
         epsilon=epsilon,
         log_true_q=log_true_q,
-        action_noise=action_noise
+        # action_noise=action_noise
     )
     callback = []
     if use_wandb == True:

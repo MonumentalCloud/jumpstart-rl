@@ -124,10 +124,13 @@ class JSRLEvalCallback(EvalCallback):
         # Also, log the Q values of the current model on the same 10000 starting states
         
         # Sample the starting states from the replay buffer
-        starting_states, observations, actions = self.model.state_action_buffer.sample(1000)      
-        observations = torch.from_numpy(observations).float().to(self.model.device)
-        actions = self.model.policy.predict(observations, deterministic=True)
-        pred_q_values = self.model.critic(observations, actions)
+        starting_states, observations, actions = self.model.state_action_buffer.sample(1000)
+        observations = torch.tensor(observations, dtype=torch.float32)      
+        with torch.no_grad():
+            actions = self.model.policy.predict(observations, deterministic=True)[0]
+            observations = observations.to(self.model.device)
+            actions = torch.tensor(actions, dtype=torch.float32).to(self.model.device)
+            pred_q_values = self.model.critic(observations, actions)
         
         # Get the mean of the pred_q_values
         mean_pred_q_values = np.mean(pred_q_values[0].cpu().detach().numpy()[:,0])
@@ -152,9 +155,8 @@ class JSRLEvalCallback(EvalCallback):
                 # Get the next observation
                 next_observation, next_reward, terminated, truncate, next_info = env.step(action)
                 # Get the next action
-                next_action, _ = self.model.policy.predict(next_observation, deterministic=True)
-                if next_reward >=1:
-                    print(next_reward)
+                with torch.no_grad():
+                    next_action, _ = self.model.policy.predict(next_observation, deterministic=True)
                 # Add the reward to the total reward
                 reward += (self.gamma**j) * next_reward
                 # Set the observation to the next observation

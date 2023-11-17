@@ -8,7 +8,6 @@ configs = [
 # List of seeds to run through
 seeds = [0, 2, 3, 4]
 
-guides_directory = "/ext_hdd/jjlee/jumpstart-rl/examples/models/plate-slide-v2-goal-observable_guide_sac/best_model.zip,/ext_hdd/jjlee/jumpstart-rl/examples/models/coffee-button-v2-goal-observable_guide_sac/best_model.zip"
 
 # Counter for alternating between GPUs
 counter = 0
@@ -27,6 +26,7 @@ for config in configs:
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name])
         # Run the training script with the current configuration flags
         # Add CUDA device flag to command
+        guides_directory = f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{guide_env}_guide_sac/best_model.zip"
         cmd = f"python train_jsrl_curriculum_multi_teacher.py --cuda=cuda:1 --sparse=True --guide_env={guide_env} --student_env={student_envs} --seed={seed} --timesteps=1000000 --wandb=True --guides_directory={guides_directory} --log_true_q=True"
         subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
         # Increment counter

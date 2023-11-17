@@ -58,7 +58,7 @@ class MetaWorldWrapper(Wrapper):
     def reset(self, seed=None):
         return self.env.reset(seed=seed)
 
-def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wandb, seed):
+def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wandb, seed, cuda_device):
     
 
     use_wandb = use_wandb == "True"
@@ -151,7 +151,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             eval_freq=10000,
             n_eval_episodes=10,
             seed=seed,
-
+            device=cuda_device
         )
         
     elif model_name == "ddpg":
@@ -176,7 +176,8 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             eval_env=eval_env,
             eval_freq=10000,
             n_eval_episodes=10,
-            seed=seed
+            seed=seed,
+            device=cuda_device
         )
     
     elif model_name == "sac":
@@ -224,12 +225,13 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             log_true_q=log_true_q,
             eval_freq=10000,
             n_eval_episodes=10,
-            seed=seed
+            seed=seed,
+            device=cuda_device
         )
     else:
         # The noise objects for TD3
         n_actions = env.action_space.shape[-1]
-        action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.1 * np.ones(n_actions))    
+        action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.5 * np.ones(n_actions))    
         
         model = get_algorithm(model_class)(
             "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
@@ -243,6 +245,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             n_eval_episodes=10,
             learning_starts=1000,
             action_noise=action_noise,
+            device=cuda_device
         )
         
     if use_wandb:
@@ -293,5 +296,6 @@ if __name__ == "__main__":
     parser.add_argument("--log_true_q", type=bool, default="True")
     parser.add_argument("--use_wandb", type=str, default="False")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--cuda_device", type=str, default="cuda:1")
     args = parser.parse_args()
-    main(args.env, args.timesteps, args.model, args.grad_steps, args.sparse, args.log_true_q, args.use_wandb, args.seed)
+    main(args.env, args.timesteps, args.model, args.grad_steps, args.sparse, args.log_true_q, args.use_wandb, args.seed, args.cuda_device)
