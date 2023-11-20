@@ -9,8 +9,11 @@ from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import polyak_update
-from stable_baselines3.td3 import TD3
+from stable_baselines3 import TD3
 from torch import nn
+import torch as th
+
+import numpy as np
 
 
 class TD3_BC(TD3):
@@ -31,6 +34,8 @@ class TD3_BC(TD3):
         policy_kwargs: Optional[Dict[str, Any]] = None,
         bc_coef: float = 0.5,  # BC coefficient for the policy objective
         alpha: float = 0.2,  # Temperature parameter for the policy objective
+        *args,
+        **kwargs,
     ):
         super().__init__(
             policy,
@@ -44,95 +49,74 @@ class TD3_BC(TD3):
             train_freq,
             gradient_steps,
             action_noise,
-            optimize_memory_usage,
-            policy_kwargs,
+            replay_buffer_class=ReplayBuffer,
+            optimize_memory_usage=optimize_memory_usage,
+            policy_kwargs=policy_kwargs,
         )
 
         self.bc_coef = bc_coef
         self.alpha = alpha
 
-    def train(self) -> None:
-        # Create the replay buffer
-        self.replay_buffer = ReplayBuffer(self.buffer_size, self.observation_space, self.action_space)
+    def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+       # Switch to train mode (this affects batch norm / dropout)
+        self.policy.set_training_mode(True)
 
-        # Set up the learning rate schedule
-        self.lr_schedule = self._get_schedule(self.learning_rate, self.lr_schedule)
+        # Update learning rate according to lr schedule
+        self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
 
-        # Create the optimizer
-        self.optimizer = self._create_optimizer()
+        actor_losses, critic_losses = [], []
+        for _ in range(gradient_steps):
+            self._n_updates += 1
+            # Sample replay buffer
+            replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
-        # Initialize the target networks
-        self._create_aliases()
-        self._create_target_network()
+            with th.no_grad():
+                # Select action according to policy and add clipped noise
+                noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
+                noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
+                next_actions = (self.actor_target(replay_data.next_observations) + noise).clamp(-1, 1)
 
-        # Initialize the variables
-        self._create_buffer()
+                # Compute the next Q-values: min over all critics targets
+                next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
+                next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+                target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
-        # Set up the exploration strategy
-        self.exploration_noise = self._create_exploration_noise()
+            # Get current Q-values estimates for each critic network
+            current_q_values = self.critic(replay_data.observations, replay_data.actions)
 
-        # Initialize the episode reward and step count
-        episode_reward = 0.0
-        episode_steps = 0
+            # Compute critic loss
+            critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
+            assert isinstance(critic_loss, th.Tensor)
+            critic_losses.append(critic_loss.item())
 
-        # Initialize the total timesteps
-        self._total_timesteps = self._episode_num * self.env.max_episode_steps
-
-        # Start the training loop
-        while self._total_timesteps < self.total_timesteps:
-            # Perform a rollout
-            episode_reward, episode_steps = self._rollout(episode_reward, episode_steps)
-
-            # Update the target networks
-            if self._total_timesteps % self.target_update_interval == 0:
-                polyak_update(self.q_net_target.parameters(), self.q_net.parameters(), self.tau)
-
-            # Train the policy and Q networks
-            self._train()
-
-            # Log the training progress
-            self._log_training_progress()
-
-    def _train(self) -> None:
-        for gradient_step in range(self.gradient_steps):
-            # Sample a batch of transitions from the replay buffer
-            batch = self.replay_buffer.sample(self.batch_size)
-
-            # Unpack the batch
-            obs, actions, rewards, next_obs, dones = batch
-
-            # Compute the target Q values
-            with torch.no_grad():
-                next_actions = self.policy_target(next_obs)
-                next_q_values = self.q_net_target(next_obs, next_actions)
-                target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
-
-            # Compute the current Q values
-            current_q_values = self.q_net(obs, actions)
-
-            # Compute the BC loss
-            bc_loss = self.policy.compute_bc_loss(obs, actions)
-
-            # Compute the Q loss
-            critic_loss = F.mse_loss(current_q_values, target_q_values)
-
-            # Optimize the Q network
-            self.optimizer.zero_grad()
+            # Optimize the critics
+            self.critic.optimizer.zero_grad()
             critic_loss.backward()
-            self.optimizer.step()
+            self.critic.optimizer.step()
 
-            # Compute the actor loss
-            lmbda = self.alpha/current_q_values.abs().mean().detach()
-            actor_loss = - lmbda * current_q_values + self.bc_coef * bc_loss
+            # Delayed policy updates
+            if self._n_updates % self.policy_delay == 0:
+                # Compute actor loss
+                actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(replay_data.observations)).mean() + self.bc_coef * self.compute_bc_loss(replay_data.observations, replay_data.actions)
+                actor_losses.append(actor_loss.item())
 
-            # Optimize the policy network
-            self.optimizer.zero_grad()
-            actor_loss.backward()
-            self.optimizer.step()
+                # Optimize the actor
+                self.actor.optimizer.zero_grad()
+                actor_loss.backward()
+                self.actor.optimizer.step()
 
-            # Update the target networks
-            if gradient_step % self.target_update_interval == 0:
-                polyak_update(self.q_net_target.parameters(), self.q_net.parameters(), self.tau)
+                polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+                polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
+                # Copy running stats, see GH issue #996
+                polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
+                polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
+
+        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        if len(actor_losses) > 0:
+            self.logger.record("train/actor_loss", np.mean(actor_losses))
+        self.logger.record("train/critic_loss", np.mean(critic_losses))
+        self.logger.record("train/q_values", np.mean(current_q_values[0].cpu().detach().numpy()))
+
     
     def compute_bc_loss(self, obs, actions):
         # Behavior cloning loss

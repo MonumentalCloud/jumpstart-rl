@@ -13,6 +13,7 @@ os.environ["TQDM_DISABLE"] = "1"
 
 from experiments.gridworld import ContinuousGridworld
 from stable_baselines3 import SAC, TD3
+from experiments.td3_bc import TD3_BC
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -120,7 +121,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
     # The noise objects for TD3
     n_actions = env.action_space.shape[-1]
     
-    model = get_jsrl_algorithm(SAC)(
+    model = get_jsrl_algorithm(TD3_BC)(
         "MlpPolicy",
         env=env,
         policy_kwargs=dict(
@@ -171,6 +172,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         timestep = 0
         while True and timestep < 100:
             action = policy.predict(state)
+            print(action)
             state, _, done, _, _ = pure_env.step(action)
             x_path.append(state[0])
             y_path.append(state[1])
@@ -200,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--guide_env", type=str, default="coffee-button-v2-goal-observable", help="Environment name")
     parser.add_argument("--guide_steps", type=str, default="best_model", help="Number of steps (Expertise) of the guide policy")
-    parser.add_argument("--timesteps", type=int, default=5e4, help="Number of timesteps to train the agent for")
+    parser.add_argument("--timesteps", type=int, default=54, help="Number of timesteps to train the agent for")
     parser.add_argument("--student_env", type=str, default="coffee-button-v2-goal-observable", help="Environment name")
     parser.add_argument("--strategy", type=str, default="curriculum", help="The strategy to use")
     parser.add_argument("--grad_steps", type=int, default=1, help="Number of gradient steps to take")
