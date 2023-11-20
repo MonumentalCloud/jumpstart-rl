@@ -1,3 +1,18 @@
+import torch
+import torch.nn.functional as F
+from typing import Any, Dict, Optional, Tuple, Type, Union
+
+from stable_baselines3.common import logger
+from stable_baselines3.common.buffers import ReplayBuffer
+from stable_baselines3.common.noise import ActionNoise
+from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
+from stable_baselines3.common.policies import ActorCriticPolicy
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
+from stable_baselines3.common.utils import polyak_update
+from stable_baselines3.td3 import TD3
+from torch import nn
+
+
 class TD3_BC(TD3):
     def __init__(
         self,
@@ -15,6 +30,7 @@ class TD3_BC(TD3):
         optimize_memory_usage: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
         bc_coef: float = 0.5,  # BC coefficient for the policy objective
+        alpha: float = 0.2,  # Temperature parameter for the policy objective
     ):
         super().__init__(
             policy,
@@ -31,7 +47,9 @@ class TD3_BC(TD3):
             optimize_memory_usage,
             policy_kwargs,
         )
+
         self.bc_coef = bc_coef
+        self.alpha = alpha
 
     def train(self) -> None:
         # Create the replay buffer
@@ -96,12 +114,18 @@ class TD3_BC(TD3):
             bc_loss = self.policy.compute_bc_loss(obs, actions)
 
             # Compute the Q loss
-            q_loss = F.mse_loss(current_q_values, target_q_values)
-
-            # Compute the total loss
-            actor_loss = q_loss - self.bc_coef * bc_loss
+            critic_loss = F.mse_loss(current_q_values, target_q_values)
 
             # Optimize the Q network
+            self.optimizer.zero_grad()
+            critic_loss.backward()
+            self.optimizer.step()
+
+            # Compute the actor loss
+            lmbda = self.alpha/current_q_values.abs().mean().detach()
+            actor_loss = - lmbda * current_q_values + self.bc_coef * bc_loss
+
+            # Optimize the policy network
             self.optimizer.zero_grad()
             actor_loss.backward()
             self.optimizer.step()
