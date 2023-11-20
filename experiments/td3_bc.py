@@ -32,7 +32,7 @@ class TD3_BC(TD3):
         action_noise: Optional[ActionNoise] = None,
         optimize_memory_usage: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
-        bc_coef: float = 0.5,  # BC coefficient for the policy objective
+        bc_coef: float = 1,  # BC coefficient for the policy objective
         alpha: float = 0.2,  # Temperature parameter for the policy objective
         *args,
         **kwargs,
@@ -96,8 +96,9 @@ class TD3_BC(TD3):
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
+            
                 # Compute actor loss
-                actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(replay_data.observations)).mean() + self.bc_coef * self.compute_bc_loss(replay_data.observations, replay_data.actions)
+                actor_loss = - (1 - self.bc_coef) * self.critic.q1_forward(replay_data.observations, self.actor(replay_data.observations)).mean() + self.bc_coef * self.compute_bc_loss(replay_data.observations, replay_data.actions)
                 actor_losses.append(actor_loss.item())
 
                 # Optimize the actor
@@ -120,4 +121,4 @@ class TD3_BC(TD3):
     
     def compute_bc_loss(self, obs, actions):
         # Behavior cloning loss
-        return F.mse_loss(self.policy(obs), actions)
+        return F.mse_loss(self.policy.actor(obs), actions)

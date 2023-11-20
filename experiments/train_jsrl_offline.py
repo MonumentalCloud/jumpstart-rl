@@ -202,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--guide_env", type=str, default="coffee-button-v2-goal-observable", help="Environment name")
     parser.add_argument("--guide_steps", type=str, default="best_model", help="Number of steps (Expertise) of the guide policy")
-    parser.add_argument("--timesteps", type=int, default=54, help="Number of timesteps to train the agent for")
+    parser.add_argument("--timesteps", type=int, default=100, help="Number of timesteps to train the agent for")
     parser.add_argument("--student_env", type=str, default="coffee-button-v2-goal-observable", help="Environment name")
     parser.add_argument("--strategy", type=str, default="curriculum", help="The strategy to use")
     parser.add_argument("--grad_steps", type=int, default=1, help="Number of gradient steps to take")
