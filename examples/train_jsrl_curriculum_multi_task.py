@@ -6,7 +6,7 @@ from gymnasium.wrappers import TimeLimit
 from datetime import date
 
 import sys
-sys.path.append('/home/jjlee/jumpstart-rl/')
+sys.path.append('/home/ubuntu/jjlee/jumpstart-rl/')
 
 import os
 os.environ["TQDM_DISABLE"] = "1"
@@ -66,12 +66,12 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
     eval_env = DummyVecEnv([lambda: eval_env])
     
     if guide_steps == "best_model":
-        guide_policy = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_sac/best_model", device="cuda:1").policy
+        guide_policy = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_sac/best_model", device="cuda:0").policy
     else:
-        guide_policy = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_sac/{guide_steps}steps_model.zip", device="cuda:1").policy
+        guide_policy = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_sac/{guide_steps}steps_model.zip", device="cuda:0").policy
     
     if secondary_guide is not None:
-        secondary_guide = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{secondary_guide}_guide_sac/best_model", device="cuda:1").policy
+        secondary_guide = SAC.load(f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{secondary_guide}_guide_sac/best_model", device="cuda:0").policy
     
     config = {
         "policy_type": strategy,
@@ -120,7 +120,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         seed=seed,
         eval_env=eval_env,
         gradient_steps=grad_steps,
-        device="cuda:1",
+        device="cuda:0",
         learning_starts=learning_starts,
         epsilon=epsilon,
         secondary_guide=secondary_guide,

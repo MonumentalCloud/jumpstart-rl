@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Get into the directory where this script is located
-cd "/home/jjlee/jumpstart-rl/examples"
+cd "/home/ubuntu/jjlee/jumpstart-rl/examples"
 
 # List of student-teacher configurations
 configs=(

@@ -313,9 +313,6 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             :param save_path: the path to the file
             """
             super().save(save_path)
-        
-        def extract_policy(self):
-            return self.actor
 
         def predict(
             self,
@@ -421,8 +418,8 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
     return JSRLPolicy
 
 
-def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
-    class JSRLAlgorithm(Algorithm):
+def get_jsrl_overestimation_algorithm(Algorithm: BaseAlgorithm):
+    class JSRLOAlgorithm(Algorithm):
         def __init__(self, policy, eval_env, learning_starts, epsilon, data_collection_strategy, log_true_q, *args, **kwargs):
             if isinstance(policy, str):
                 policy = self._get_policy_from_name(policy)

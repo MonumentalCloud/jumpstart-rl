@@ -6,7 +6,7 @@ from gymnasium.wrappers import TimeLimit
 from datetime import date
 
 import sys
-sys.path.append('/home/jjlee/jumpstart-rl/')
+sys.path.append('/home/ubuntu/jjlee/jumpstart-rl/')
 
 import os
 os.environ["TQDM_DISABLE"] = "1"
@@ -17,7 +17,7 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 import numpy as np
-from src.jsrl.jsrl import get_jsrl_algorithm, JSRLGuides
+from src.jsrl.jsrl_overestimation import get_jsrl_overestimation_algorithm, JSRLGuides
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
@@ -133,7 +133,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         seed=seed,
         eval_env=eval_env,
         gradient_steps=grad_steps,
-        device="cuda:1",
+        device="cuda:0",
         learning_starts=learning_starts,
         epsilon=epsilon,
         log_true_q=log_true_q,

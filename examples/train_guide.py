@@ -20,7 +20,7 @@ from wandb.integration.sb3 import WandbCallback
 import numpy as np
 
 import sys
-sys.path.append('/home/jjlee/jumpstart-rl/')
+sys.path.append('/home/ubuntu/jjlee/jumpstart-rl/')
 
 from src.jsrl.guide_helper import get_algorithm
 
@@ -296,6 +296,6 @@ if __name__ == "__main__":
     parser.add_argument("--log_true_q", type=bool, default="True")
     parser.add_argument("--use_wandb", type=str, default="False")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--cuda_device", type=str, default="cuda:1")
+    parser.add_argument("--cuda_device", type=str, default="cuda:0")
     args = parser.parse_args()
     main(args.env, args.timesteps, args.model, args.grad_steps, args.sparse, args.log_true_q, args.use_wandb, args.seed, args.cuda_device)

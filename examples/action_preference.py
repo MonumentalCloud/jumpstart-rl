@@ -14,7 +14,7 @@ from wandb.integration.sb3 import WandbCallback
 
 def main(env_name):
     env = gym.make(env_name, max_episode_steps=150, render_mode="rgb_array") #continuing_task=False, max_episode_steps=150)
-    policy = TD3.load(f"/home/jjlee/jumpstart-rl/examples/models/{env_name}_TD3/best_model.zip").policy
+    policy = TD3.load(f"/home/ubuntu/jjlee/jumpstart-rl/examples/models/{env_name}_TD3/best_model.zip").policy
     
     # Now we can use the trained agent to perform action preference
     obs, _ = env.reset()
