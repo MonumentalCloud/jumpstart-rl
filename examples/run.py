@@ -22,9 +22,13 @@ for config in configs:
         # Truncate the "-v2-goal-observable" suffix from the environment names
         session_name = f"{seed}_{guide_env.replace('-v2-goal-observable', '')}_MC"
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name])
+        
+        # Run the jsrl conda env and cd into examples folder
+        cmd = f"conda activate jsrl && cd /home/ubuntu/jjlee/jumpstart-rl/examples"
+        subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
 
         # Run the training script with the current configuration flags
-        cmd = f"python train_guide.py --sparse=True --cuda_device=cuda:{counter%2} --env={guide_env} --model=sac --timesteps=1000000 --grad_steps=1 --seed={seed} --use_wandb=True --log_true_q=True"
+        cmd = f"python train_guide.py --sparse=True --cuda_device=cuda:0 --env={guide_env} --model=td3 --timesteps=1000000 --grad_steps=1 --seed={seed} --use_wandb=True --log_true_q=True"
         subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
         
         counter += 1

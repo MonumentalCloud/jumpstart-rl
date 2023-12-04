@@ -53,7 +53,8 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
     use_wandb = use_wandb == "True"
     priority = priority == "True"
     log_true_q = log_true_q == "True"
- 
+    
+
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[student_env]
     env = cls(seed=seed)
     env._freeze_rand_vec = False   
@@ -110,8 +111,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
             config=config,
             group=f"{date.today()}",
             sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
-            monitor_gym=True,
-            dir="/ext_hdd/jjlee/jumpstart-rl/logs/pointmaze_jsrl_curriculum", 
+            monitor_gym=True, 
         )
     
     n = 10
@@ -125,6 +125,16 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
     n_actions = env.action_space.shape[-1]
     action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.7 * np.ones(n_actions))
     
+    comparison_model = TD3(
+        "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
+            env=env,
+            verbose=1,
+            tensorboard_log=f"/home/ubuntu/jjlee/jumpstart-rl/logs/{env_name}_guide_TD3",
+            seed=seed,
+            learning_starts=1000,
+            action_noise=action_noise,
+    )
+    
     model = get_jsrl_algorithm(TD3)(
         "MlpPolicy",
         env=env,
@@ -137,7 +147,6 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         ),
         data_collection_strategy=data_collection_strategy,
         verbose=0,
-        tensorboard_log="ext_hdd/jjlee/jumpstart-rl/logs/pointmaze_jsrl_curriculum",
         seed=seed,
         eval_env=eval_env,
         gradient_steps=grad_steps,
@@ -145,6 +154,7 @@ def main(seed, env_name, guide_steps, timesteps, student_env, strategy, grad_ste
         learning_starts=learning_starts,
         epsilon=epsilon,
         log_true_q=log_true_q,
+        comparison_model=comparison_model,
         # action_noise=action_noise
     )
     callback = []

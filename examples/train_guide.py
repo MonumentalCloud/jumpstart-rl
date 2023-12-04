@@ -60,7 +60,7 @@ class MetaWorldWrapper(Wrapper):
 
 def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wandb, seed, cuda_device):
     
-
+    sparse = sparse == "True"
     use_wandb = use_wandb == "True"
     
     cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[env_name]
@@ -103,7 +103,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
     if use_wandb:
         wandb.init(project="jsrl",
                 entity="jsrl-boys",
-            dir="/ext_hdd/jjlee/jumpstart-rl/logs",
+            dir="/home/ubuntu/jjlee/jumpstart-rl/logs",
             config=config,
             group=f"guide_{model_name}_{env_name}",
             sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
@@ -141,7 +141,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             buffer_size=int(1e6),
             learning_rate=1e-3,
             gamma=0.98,
-            tensorboard_log=f"/ext_hdd/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
+            tensorboard_log=f"/home/ubuntu/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
             replay_buffer_class=HerReplayBuffer,
             replay_buffer_kwargs=her_kwargs,
             learning_starts=1000,
@@ -167,7 +167,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             buffer_size=int(1e6),
             learning_rate=1e-3,
             gamma=0.98,
-            tensorboard_log=f"/ext_hdd/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
+            tensorboard_log=f"/home/ubuntu/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
             replay_buffer_class=HerReplayBuffer,
             replay_buffer_kwargs=her_kwargs,
             learning_starts=1000,
@@ -205,7 +205,7 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             policy="MlpPolicy",
             env=env,
             verbose=1,
-            tensorboard_log=f"/ext_hdd/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
+            tensorboard_log=f"/home/ubuntu/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
             learning_rate=3e-4,
             buffer_size=int(1e6),
             learning_starts=1000,
@@ -237,11 +237,11 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
             "MlpPolicy",  # You can also use "CnnPolicy" for CNN architectures
             env=env,
             verbose=1,
-            tensorboard_log=f"/ext_hdd/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
+            tensorboard_log=f"/home/ubuntu/jjlee/jumpstart-rl/logs/{env_name}_guide_{model_name}",
             log_true_q=log_true_q,
             eval_env=eval_env,
             seed=seed,
-            eval_freq=100,
+            eval_freq=10000,
             n_eval_episodes=10,
             learning_starts=1000,
             action_noise=action_noise,
@@ -257,13 +257,13 @@ def main(env_name, timesteps, model_name, grad_steps, sparse, log_true_q, use_wa
                   EvalCallback(
             eval_env,
             n_eval_episodes=100,
-            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
+            best_model_save_path=f"/home/ubuntu/jjlee/jumpstart-rl/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
         ),]
     else:
         callback = [EvalCallback(
             eval_env,
             n_eval_episodes=100,
-            best_model_save_path=f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
+            best_model_save_path=f"/home/ubuntu/jjlee/jumpstart-rl/models/{env_name}_guide_{model_name}_{'sparse' if sparse else 'dense'}"
         ),
         ]
     
@@ -292,7 +292,7 @@ if __name__ == "__main__":
     parser.add_argument("--timesteps", type=int, default=1e6)
     parser.add_argument("--model", type=str, default="sac")
     parser.add_argument("--grad_steps", type=int, default=1)
-    parser.add_argument("--sparse", type=bool, default=True)
+    parser.add_argument("--sparse", type=bool, default=False)
     parser.add_argument("--log_true_q", type=bool, default="True")
     parser.add_argument("--use_wandb", type=str, default="False")
     parser.add_argument("--seed", type=int, default=0)

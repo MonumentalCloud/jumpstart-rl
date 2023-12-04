@@ -115,11 +115,14 @@ class HelperEvalCallback(EvalCallback):
             for j in range(300):
                 # Get the next observation
                 next_observation, next_reward, terminated, truncate, next_info = env.step(action)
+                if j==0:
+                    next_reward=0
                 # Get the next action
                 with torch.no_grad():
                     next_action, _ = self.model.policy.predict(next_observation, deterministic=True)
                 # Add the reward to the total reward
-                reward += (self.gamma**j) * next_reward
+                this_step_reward = (self.gamma**j) * next_reward
+                reward += this_step_reward
                 # Set the observation to the next observation
                 observation = next_observation
                 # Set the action to the next action
@@ -128,9 +131,8 @@ class HelperEvalCallback(EvalCallback):
                 # Set the info to the next info
                 info = next_info
                 if truncate:
-                    env.reset()
+                    next_observation, next_info = env.reset()
                     break
-               
             # Append the reward to the list of true q values
             true_q_values.append(reward)
             
@@ -139,7 +141,6 @@ class HelperEvalCallback(EvalCallback):
         #log the mean of the true q values and the mean of the pred q values
         self.logger.record("jsrl/mean_true_q_values", mean_true_q_values)
         self.logger.record("jsrl/mean_pred_q_values", mean_pred_q_values)
-          
 
 
 

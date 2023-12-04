@@ -1,6 +1,6 @@
 import argparse
 import gymnasium as gym
-from stable_baselines3 import TD3
+from stable_baselines3 import TD3, SAC
 from stable_baselines3.common.callbacks import EvalCallback
 
 import numpy as np
@@ -15,9 +15,9 @@ def main(seed, env_name, guide_steps, timesteps, student_env):
         student_env = env_name
     env = gym.make(student_env, max_episode_steps=150) #continuing_task=False)
     if guide_steps == "best_model":
-        guide_policy = TD3.load(f"/ext2/jjlee/jumpstart-rl/models/{env_name}_guide_TD3/best_model").policy
+        guide_policy = SAC.load(f"/home/ubuntu/jjlee/jumpstart-rl/models/{env_name}_guide_sac/best_model").policy
     else:
-        guide_policy = TD3.load(f"/ext2/jjlee/jumpstart-rl/models/{env_name}_TD3/{guide_steps}steps_model.zip").policy
+        guide_policy = SAC.load(f"/home/ubuntu/jjlee/jumpstart-rl/models/{env_name}_guide_sac/{guide_steps}steps_model.zip").policy
     
     config = {
         "policy_type": "curriculum",

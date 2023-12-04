@@ -2,3 +2,5 @@
 wandb/
 logs/
 .conda/
+*.png
+*.zip

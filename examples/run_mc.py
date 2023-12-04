@@ -24,10 +24,13 @@ for config in configs:
         # Truncate the "-v2-goal-observable" suffix from the environment names
         session_name = f"{seed}_{guide_env.replace('-v2-goal-observable', '')}_{student_envs.replace('-v2-goal-observable', '')}_monte_carlo"
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name])
+        # Run the jsrl conda env and cd into examples folder
+        cmd = f"conda activate jsrl && cd /home/ubuntu/jjlee/jumpstart-rl/examples"
+        subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
         # Run the training script with the current configuration flags
         # Add CUDA device flag to command
-        guides_directory = f"/ext_hdd/jjlee/jumpstart-rl/examples/models/{guide_env}_guide_sac/best_model.zip"
-        cmd = f"python train_jsrl_curriculum_multi_teacher.py --cuda=cuda:0 --sparse=True --guide_env={guide_env} --student_env={student_envs} --seed={seed} --timesteps=1000000 --wandb=True --guides_directory={guides_directory} --log_true_q=True"
+        guides_directory = f"/home/ubuntu/jjlee/jumpstart-rl/models/{guide_env}_guide_sac/best_model"
+        cmd = f"python train_jsrl_mc_side_by_side.py --sparse=True --guide_env={guide_env} --student_env={student_envs} --seed={seed} --timesteps=1000000 --wandb=True --guides_directory={guides_directory} --log_true_q=True"
         subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
         # Increment counter
         counter += 1

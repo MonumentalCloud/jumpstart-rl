@@ -5,10 +5,11 @@ from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, BaseCallback
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
-from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.common.vec_env import VecEnv, sync_envs_normalization
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn,TrainFreq, TrainFrequencyUnit
 from stable_baselines3 import SAC, PPO, DQN, DDPG, TD3, A2C
+from stable_baselines3.common.evaluation import evaluate_policy
 
 import torch
 
@@ -112,11 +113,93 @@ class JSRLEvalCallback(EvalCallback):
     def _on_step(self) -> bool:
         self.model.policy.jsrl_evaluation = True
         self.model.jsrl_evaluation = True
-        if self.n_calls % 100000 == 0 and self.log_true_q:
+        if self.n_calls % 100 == 0 and self.log_true_q:
             self.monte_carlo_evaluation()
-        super()._on_step()
+        continue_training = True
+
+        if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+            # Sync training and eval env if there is VecNormalize
+            if self.model.get_vec_normalize_env() is not None:
+                try:
+                    sync_envs_normalization(self.training_env, self.eval_env)
+                except AttributeError as e:
+                    raise AssertionError(
+                        "Training and eval env are not wrapped the same way, "
+                        "see https://stable-baselines3.readthedocs.io/en/master/guide/callbacks.html#evalcallback "
+                        "and warning above."
+                    ) from e
+
+            # Reset success rate buffer
+            self._is_success_buffer = []
+
+            episode_rewards, episode_lengths = evaluate_policy(
+                self.model.policy.exploration_policy,
+                self.eval_env,
+                n_eval_episodes=self.n_eval_episodes,
+                render=self.render,
+                deterministic=self.deterministic,
+                return_episode_rewards=True,
+                warn=self.warn,
+                callback=self._log_success_callback,
+            )
+
+            if self.log_path is not None:
+                self.evaluations_timesteps.append(self.num_timesteps)
+                self.evaluations_results.append(episode_rewards)
+                self.evaluations_length.append(episode_lengths)
+
+                kwargs = {}
+                # Save success log if present
+                if len(self._is_success_buffer) > 0:
+                    self.evaluations_successes.append(self._is_success_buffer)
+                    kwargs = dict(successes=self.evaluations_successes)
+
+                np.savez(
+                    self.log_path,
+                    timesteps=self.evaluations_timesteps,
+                    results=self.evaluations_results,
+                    ep_lengths=self.evaluations_length,
+                    **kwargs,
+                )
+
+            mean_reward, std_reward = np.mean(episode_rewards), np.std(episode_rewards)
+            mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(episode_lengths)
+            self.last_mean_reward = mean_reward
+
+            if self.verbose >= 1:
+                print(f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
+                print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
+            # Add to current Logger
+            self.logger.record("eval/mean_reward", float(mean_reward))
+            self.logger.record("eval/mean_ep_length", mean_ep_length)
+
+            if len(self._is_success_buffer) > 0:
+                success_rate = np.mean(self._is_success_buffer)
+                if self.verbose >= 1:
+                    print(f"Success rate: {100 * success_rate:.2f}%")
+                self.logger.record("eval/success_rate", success_rate)
+
+            # Dump log so the evaluation results are printed with the correct timestep
+            self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")
+            self.logger.dump(self.num_timesteps)
+
+            if mean_reward > self.best_mean_reward:
+                if self.verbose >= 1:
+                    print("New best mean reward!")
+                if self.best_model_save_path is not None:
+                    self.model.save(os.path.join(self.best_model_save_path, "best_model"))
+                self.best_mean_reward = mean_reward
+                # Trigger callback on new best model, if needed
+                if self.callback_on_new_best is not None:
+                    continue_training = self.callback_on_new_best.on_step()
+
+            # Trigger callback after every evaluation, if needed
+            if self.callback is not None:
+                continue_training = continue_training and self._on_event()
+
         self.model.policy.jsrl_evaluation = False
         self.model.jsrl_evaluation = False
+        return continue_training
     
     def monte_carlo_evaluation(self):
         # Compute true q values using the current model monte carlo style by initializing the environment from the 10000 starting states and running the model for 1000 steps from the replay buffer
@@ -127,13 +210,17 @@ class JSRLEvalCallback(EvalCallback):
         starting_states, observations, actions = self.model.state_action_buffer.sample(1000)
         observations = torch.tensor(observations, dtype=torch.float32)      
         with torch.no_grad():
-            actions = self.model.policy.predict(observations, deterministic=True)[0]
+            actions = self.model.policy.predict(observations, timesteps=[np.inf], deterministic=True)[0]
             observations = observations.to(self.model.device)
+            
             actions = torch.tensor(actions, dtype=torch.float32).to(self.model.device)
+            
             pred_q_values = self.model.critic(observations, actions)
+            base_pred_q_values = self.model.comparison_model.critic(observations, actions)
         
         # Get the mean of the pred_q_values
         mean_pred_q_values = np.mean(pred_q_values[0].cpu().detach().numpy()[:,0])
+        base_mean_pred_q_values = np.mean(base_pred_q_values[0].cpu().detach().numpy()[:,0])
         
         # Get the true q values by running the model for 1000 steps from the starting states
         true_q_values = []
@@ -154,11 +241,14 @@ class JSRLEvalCallback(EvalCallback):
             for j in range(300):
                 # Get the next observation
                 next_observation, next_reward, terminated, truncate, next_info = env.step(action)
+                if j==0:
+                    next_reward=0
                 # Get the next action
                 with torch.no_grad():
-                    next_action, _ = self.model.policy.predict(next_observation, deterministic=True)
+                    next_action, _ = self.model.policy.predict(next_observation, timesteps=[np.inf], deterministic=True)
                 # Add the reward to the total reward
-                reward += (self.gamma**j) * next_reward
+                this_step_reward = (self.gamma**j) * next_reward
+                reward += this_step_reward
                 # Set the observation to the next observation
                 observation = next_observation
                 # Set the action to the next action
@@ -167,9 +257,8 @@ class JSRLEvalCallback(EvalCallback):
                 # Set the info to the next info
                 info = next_info
                 if truncate:
-                    env.reset()
+                    next_observation, next_info = env.reset()
                     break
-               
             # Append the reward to the list of true q values
             true_q_values.append(reward)
             
@@ -178,6 +267,7 @@ class JSRLEvalCallback(EvalCallback):
         #log the mean of the true q values and the mean of the pred q values
         self.logger.record("jsrl/mean_true_q_values", mean_true_q_values)
         self.logger.record("jsrl/mean_pred_q_values", mean_pred_q_values)
+        self.logger.record("jsrl/base_mean_pred_q_values", base_mean_pred_q_values)
         
         
           
@@ -209,7 +299,7 @@ class JSRLLogger():
         
 # class of JSRLGuides that takes in pretrained models and returns the action of the guide policy
 class JSRLGuides():
-    def __init__(self, guides_directory, priority=False, cuda=1, *args, **kwargs):
+    def __init__(self, guides_directory, priority=False, cuda=0, *args, **kwargs):
         self.guides = []
         for guide in guides_directory:
             self.guides.append(self.load(guide, device=f"cuda:{cuda}"))
@@ -282,6 +372,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
         ) -> None:
             super().__init__(*args, **kwargs)
             self.guide_policy = guide_policy
+            self.exploration_policy = super()
             self.tolerance = tolerance
             assert strategy in ["curriculum", "random"], f"strategy: '{strategy}' must be 'curriculum' or 'random'"
             self.strategy = strategy
@@ -339,75 +430,78 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
             :return: the model's action and the next hidden state
                 (used in recurrent policies)
             """
-            if self.jsrl_evaluation:
-                # if state == None:
-                #     action, state = super().predict(observation, observation, timesteps == 0, deterministic)
-                # else:
-                action, state = super().predict(observation, state, timesteps == 0, deterministic)
-                return action, state
-            else:                    
-                self.total_inference += 1
-                horizon = self.horizon
-                # if not self.training and not self.jsrl_evaluation:
-                #     horizon = 0
-                timesteps_lte_horizon = timesteps <= horizon
-                timesteps_gt_horizon = timesteps > horizon
-                # if isinstance(observation, dict):
-                #     observation_lte_horizon = {k: v[timesteps_lte_horizon] for k, v in observation.items()}
-                #     observation_gt_horizon = {k: v[timesteps_gt_horizon] for k, v in observation.items()}
-                # elif isinstance(observation, np.ndarray):
-                #     # repeat the timesteps so that it matches the dimension of observation
-                #     # make a mask called timesteps_lte_horizon that is the same shape as observation and is True for timesteps <= horizon
-                #     timesteps_lte_horizon = [timesteps_lte_horizon[0]] * observation.shape[1]
-                #     observation = observation.squeeze()
-                #     print(observation.shape)
-                #     observation_lte_horizon = observation[timesteps_lte_horizon]
-                #     observation_gt_horizon = observation[timesteps_gt_horizon]
-                # else:
-                #     observation_lte_horizon = observation
-                #     observation_gt_horizon = observation
-                if state is not None:
-                    state_lte_horizon = state[timesteps_lte_horizon]
-                    state_gt_horizon = state[timesteps_gt_horizon]
-                else:
-                    state_lte_horizon = None
-                    state_gt_horizon = None
-                if episode_start is not None:
-                    episode_start_lte_horizon = episode_start[timesteps_lte_horizon]
-                    episode_start_gt_horizon = episode_start[timesteps_gt_horizon]
-                else:
-                    episode_start_lte_horizon = None
-                    episode_start_gt_horizon = None
+            # if self.jsrl_evaluation:
+            #     # if state == None:
+            #     #     action, state = super().predict(observation, observation, timesteps == 0, deterministic)
+            #     # else:
+            #     action, state = super().predict(observation, state, timesteps == 0, deterministic)
+            #     return action, state
+            # else:                    
+            self.total_inference += 1
+            horizon = self.horizon
+            # if not self.training and not self.jsrl_evaluation:
+            #     horizon = 0
+            timesteps_lte_horizon = timesteps <= horizon
+            timesteps_gt_horizon = timesteps > horizon
+            # if isinstance(observation, dict):
+            #     observation_lte_horizon = {k: v[timesteps_lte_horizon] for k, v in observation.items()}
+            #     observation_gt_horizon = {k: v[timesteps_gt_horizon] for k, v in observation.items()}
+            # elif isinstance(observation, np.ndarray):
+            #     # repeat the timesteps so that it matches the dimension of observation
+            #     # make a mask called timesteps_lte_horizon that is the same shape as observation and is True for timesteps <= horizon
+            #     timesteps_lte_horizon = [timesteps_lte_horizon[0]] * observation.shape[1]
+            #     observation = observation.squeeze()
+            #     print(observation.shape)
+            #     observation_lte_horizon = observation[timesteps_lte_horizon]
+            #     observation_gt_horizon = observation[timesteps_gt_horizon]
+            # else:
+            #     observation_lte_horizon = observation
+            #     observation_gt_horizon = observation
+            if state is not None:
+                state_lte_horizon = state[timesteps_lte_horizon]
+                state_gt_horizon = state[timesteps_gt_horizon]
+            else:
+                state_lte_horizon = None
+                state_gt_horizon = None
+            if episode_start is not None:
+                episode_start_lte_horizon = episode_start[timesteps_lte_horizon]
+                episode_start_gt_horizon = episode_start[timesteps_gt_horizon]
+            else:
+                episode_start_lte_horizon = None
+                episode_start_gt_horizon = None
 
-                action = np.zeros((len(timesteps), *self.action_space.shape), dtype=self.action_space.dtype)
-                if state is not None:
-                    state = np.zeros((len(timesteps), *state.shape[1:]), dtype=state_lte_horizon.dtype)
-                    
+            action = np.zeros((len(timesteps), *self.action_space.shape), dtype=self.action_space.dtype)
+            if state is not None:
+                state = np.zeros((len(timesteps), *state.shape[1:]), dtype=state_lte_horizon.dtype)
                 
+            
 
-                if len(timesteps_lte_horizon) > 1:
-                    raise ValueError("timesteps_lte_horizon is more than one")
-                if timesteps_lte_horizon[0]:
-                # if timesteps_lte_horizon.any():
-                    action_lte_horizon, state_lte_horizon = self.guide_policy.predict(
-                        observation, state_lte_horizon, episode_start_lte_horizon, deterministic
-                    )
-                    num_true = np.sum(timesteps_lte_horizon)
-                    self.guide_inference += 1
-                    self.cumulative_guide_inference += 1
-                    action[timesteps_lte_horizon] = action_lte_horizon
-                    if state is not None:
-                        state[timesteps_lte_horizon] = state_lte_horizon
+            if len(timesteps_lte_horizon) > 1:
+                raise ValueError("timesteps_lte_horizon is more than one")
+            if timesteps_lte_horizon[0]:
+                
+            # if timesteps_lte_horizon.any():
+                action_lte_horizon, state_lte_horizon = self.guide_policy.predict(
+                    observation, state_lte_horizon, episode_start_lte_horizon, deterministic
+                )
+                num_true = np.sum(timesteps_lte_horizon)
+                self.guide_inference += 1
+                self.cumulative_guide_inference += 1
+                action[timesteps_lte_horizon] = action_lte_horizon
+                if state is not None:
+                    state[timesteps_lte_horizon] = state_lte_horizon
 
-                elif timesteps_gt_horizon[0]:
-                    action_gt_horizon, state_gt_horizon = super().predict(
-                        observation, state_gt_horizon, episode_start_gt_horizon, deterministic
-                    )
-                    action[timesteps_gt_horizon] = action_gt_horizon
-                    if state is not None:
-                        state[timesteps_gt_horizon] = state_gt_horizon
-                        
-                return action, state
+            elif timesteps_gt_horizon[0]:
+                action_gt_horizon, state_gt_horizon = super().predict(
+                    observation, state_gt_horizon, episode_start_gt_horizon, deterministic
+                )
+                if timesteps[0] == np.inf:
+                    return action_gt_horizon, state_gt_horizon
+                action[timesteps_gt_horizon] = action_gt_horizon
+                if state is not None:
+                    state[timesteps_gt_horizon] = state_gt_horizon
+                    
+            return action, state
 
         def update_horizon(self) -> None:
             """
@@ -423,7 +517,7 @@ def get_jsrl_policy(ExplorationPolicy: BasePolicy):
 
 def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
     class JSRLAlgorithm(Algorithm):
-        def __init__(self, policy, eval_env, learning_starts, epsilon, data_collection_strategy, log_true_q, *args, **kwargs):
+        def __init__(self, policy, eval_env, learning_starts, epsilon, data_collection_strategy, log_true_q, comparison_model = None, *args, **kwargs):
             if isinstance(policy, str):
                 policy = self._get_policy_from_name(policy)
             else:
@@ -438,7 +532,8 @@ def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
             self.data_collection_strategy = data_collection_strategy
             self.log_true_q = log_true_q
             self.state_action_buffer = JSRLStatesActionsBuffer(100000, self.policy.action_space.shape[0], self.policy.observation_space.shape[0])
-
+            if comparison_model is not None:
+                self.comparison_model = comparison_model
 
         def _init_callback(
             self,
@@ -498,6 +593,33 @@ def get_jsrl_algorithm(Algorithm: BaseAlgorithm):
             if self.policy.strategy == "random" and self.env.buf_dones.any():
                 self.policy.update_horizon()
             return action, state
+        
+        def learn(
+                self,
+                total_timesteps: int,
+                callback: MaybeCallback = None,
+                log_interval: int = 4,
+                tb_log_name: str = "TD3",
+                reset_num_timesteps: bool = True,
+                progress_bar: bool = False,
+            ) :
+            if self.comparison_model is not None:
+                self.comparison_model.learn(
+                    total_timesteps=total_timesteps,
+                    callback=callback,
+                    log_interval=log_interval,
+                    tb_log_name=tb_log_name,
+                    reset_num_timesteps=reset_num_timesteps,
+                    progress_bar=progress_bar,
+                )
+            return super().learn(
+                total_timesteps=total_timesteps,
+                callback=callback,
+                log_interval=log_interval,
+                tb_log_name=tb_log_name,
+                reset_num_timesteps=reset_num_timesteps,
+                progress_bar=progress_bar,
+            )
         
         # Write a collect_rollouts function that is the same as the one in stable_baselines3.common.on_policy_algorithm but with the following changes:
         # 1. When the np.random.random() < self.epsilon, the action is random

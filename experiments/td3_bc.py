@@ -32,7 +32,7 @@ class TD3_BC(TD3):
         action_noise: Optional[ActionNoise] = None,
         optimize_memory_usage: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
-        bc_coef: float = 1,  # BC coefficient for the policy objective
+        bc_coef: float = 0.5,  # BC coefficient for the policy objective
         alpha: float = 0.2,  # Temperature parameter for the policy objective
         *args,
         **kwargs,
