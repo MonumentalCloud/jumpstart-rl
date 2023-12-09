@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/ubuntu/jjlee/jumpstart-rl/')
+sys.path.append('/home/jjlee/jumpstart-rl/')
 
 
 from experiments.gridworld import DiscreteGridworld, GoodOracleDiscrete, NeuralQLearningAgent, Buffer
